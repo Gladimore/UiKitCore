@@ -1,0 +1,81 @@
+# .github/workflows/extract-uikitcore.yml
+#
+# Downloads an Apple-signed IPSW directly from Apple's CDN (via the URL you
+# supply) and extracts UIKitCore from the dyld shared cache using the
+# `blacktop/ipsw` CLI, then uploads just that one framework binary as a
+# build artifact. Runs entirely on GitHub's Linux runner -- nothing touches
+# your Windows machine except the final small download.
+#
+# Usage: trigger manually (workflow_dispatch) and paste in the direct IPSW
+# URL from ipsw.me's "Download" button for your exact build.
+
+name: Extract UIKitCore from IPSW
+
+on:
+  workflow_dispatch:
+    inputs:
+      ipsw_url:
+        description: 'Direct Apple CDN URL to the .ipsw file (from ipsw.me)'
+        required: true
+        type: string
+      framework_path:
+        description: 'Path inside the shared cache to extract'
+        required: false
+        type: string
+        default: '/System/Library/PrivateFrameworks/UIKitCore.framework/UIKitCore'
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free up disk space
+        run: |
+          # IPSWs are ~9-10GB and the shared cache extraction needs
+          # working room too -- default runner disk is tight for this.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h
+
+      - name: Install download + ipsw tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq aria2
+          curl -sL https://github.com/blacktop/ipsw/releases/latest/download/ipsw_linux_amd64.tar.gz -o ipsw.tar.gz
+          tar -xzf ipsw.tar.gz
+          chmod +x ipsw
+          sudo mv ipsw /usr/local/bin/ipsw
+          ipsw version
+
+      - name: Download IPSW
+        run: |
+          # aria2c opens multiple parallel connections to the same file and
+          # auto-retries/resumes on drops -- this is what actually improves
+          # speed/stability against Apple's CDN, not a GitHub token (which
+          # Apple's servers don't recognize and has nothing to do with this
+          # download -- GITHUB_TOKEN only authenticates calls back to
+          # GitHub's own API, e.g. creating releases or checking out repos).
+          aria2c -x 16 -s 16 -k 1M --retry-wait=5 --max-tries=0 \
+            --file-allocation=falloc \
+            -o firmware.ipsw \
+            "${{ inputs.ipsw_url }}"
+          ls -lh firmware.ipsw
+
+      - name: Extract dyld_shared_cache from IPSW
+        run: |
+          ipsw extract --dyld firmware.ipsw
+          # This produces a dyld_shared_cache_* file (and .N split segments)
+          # in the current directory.
+          ls -lh dyld_shared_cache*
+
+      - name: Split out individual framework from shared cache
+        run: |
+          MAIN_CACHE=$(ls dyld_shared_cache_* | grep -v '\.' | head -n1)
+          echo "Using cache: $MAIN_CACHE"
+          ipsw dyld extract "$MAIN_CACHE" "${{ inputs.framework_path }}" --output extracted/
+          ls -lh extracted/
+
+      - name: Upload UIKitCore artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UIKitCore
+          path: extracted/*
+          retention-days: 3
