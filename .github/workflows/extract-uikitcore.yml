@@ -130,13 +130,30 @@ jobs:
           ls -l /dev/fuse || { echo "::error::/dev/fuse not present on this runner"; exit 1; }
 
           ipsw extract --dyld firmware.ipsw
-          # This produces a dyld_shared_cache_* file (and .N split segments)
-          # in the current directory.
-          ls -lh dyld_shared_cache*
+
+          # ipsw writes output into a build-identifier-named subdirectory
+          # (e.g. 23F84__iPhone14,7/), not the current directory -- confirmed
+          # from the actual run output ("Created 23F84__iPhone14,7/dyld_shared_cache_arm64e...").
+          # Find it dynamically rather than assuming a flat layout or
+          # hardcoding this run's specific build string.
+          CACHE_DIR=$(dirname "$(find . -name 'dyld_shared_cache_arm64e' -not -name '*.*' | head -n1)")
+          if [ -z "$CACHE_DIR" ] || [ "$CACHE_DIR" = "." ]; then
+            echo "::error::Could not locate dyld_shared_cache_arm64e output directory"
+            find . -iname 'dyld_shared_cache*'
+            exit 1
+          fi
+          echo "Found shared cache dir: $CACHE_DIR"
+          echo "CACHE_DIR=$CACHE_DIR" >> "$GITHUB_ENV"
+          ls -lh "$CACHE_DIR"/dyld_shared_cache_arm64e*
 
       - name: Split out individual framework from shared cache
         run: |
-          MAIN_CACHE=$(ls dyld_shared_cache_* | grep -v '\.' | head -n1)
+          MAIN_CACHE="$CACHE_DIR/dyld_shared_cache_arm64e"
+          if [ ! -f "$MAIN_CACHE" ]; then
+            echo "::error::Expected main cache file not found: $MAIN_CACHE"
+            ls -la "$CACHE_DIR"
+            exit 1
+          fi
           echo "Using cache: $MAIN_CACHE"
           ipsw dyld extract "$MAIN_CACHE" "${{ inputs.framework_path }}" --output extracted/
           ls -lh extracted/
