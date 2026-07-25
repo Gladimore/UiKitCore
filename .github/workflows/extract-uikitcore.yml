@@ -74,6 +74,26 @@ jobs:
           sudo mv ipsw /usr/local/bin/ipsw
           ipsw version
 
+      - name: Build and install apfs-fuse
+        run: |
+          # ipsw needs apfs-fuse on PATH to mount the extracted APFS system
+          # volume DMG -- it's not in Ubuntu's apt repos, so build the small
+          # upstream project from source. FUSE dev headers + zlib/bzip2/
+          # attr are its build deps.
+          sudo apt-get install -y -qq \
+            fuse libfuse-dev cmake build-essential \
+            libattr1-dev zlib1g-dev libbz2-dev
+          git clone --depth 1 https://github.com/sgan81/apfs-fuse.git
+          cd apfs-fuse
+          git submodule update --init --recursive
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j"$(nproc)"
+          sudo cp apfs-fuse /usr/local/bin/
+          sudo cp apfsutil /usr/local/bin/ 2>/dev/null || true
+          apfs-fuse --help || true
+          cd ../..
+
       - name: Download IPSW
         run: |
           # aria2c opens multiple parallel connections to the same file and
@@ -90,6 +110,12 @@ jobs:
 
       - name: Extract dyld_shared_cache from IPSW
         run: |
+          # GitHub's Ubuntu runners are full VMs (not containers), so
+          # /dev/fuse should already exist -- verify rather than assume, so
+          # a missing device node fails clearly here instead of surfacing
+          # as a confusing mount error three steps of output later.
+          ls -l /dev/fuse || { echo "::error::/dev/fuse not present on this runner"; exit 1; }
+
           ipsw extract --dyld firmware.ipsw
           # This produces a dyld_shared_cache_* file (and .N split segments)
           # in the current directory.
