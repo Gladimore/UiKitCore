@@ -78,11 +78,24 @@ jobs:
         run: |
           # ipsw needs apfs-fuse on PATH to mount the extracted APFS system
           # volume DMG -- it's not in Ubuntu's apt repos, so build the small
-          # upstream project from source. FUSE dev headers + zlib/bzip2/
-          # attr are its build deps.
+          # upstream project from source.
+          #
+          # NOTE: the actual mount binary (apfsfuse/ApfsFuse.cpp) includes
+          # <fuse3/fuse.h> -- it needs libfuse3-dev, not libfuse-dev (FUSE2).
+          # Installing the wrong one lets everything except apfs-fuse itself
+          # build (apfsutil/apfs-dump/apfs-dump-quick don't touch FUSE
+          # headers), which is why the first attempt got 98% through before
+          # failing specifically on the one binary we actually need.
           sudo apt-get install -y -qq \
-            fuse libfuse-dev cmake build-essential \
+            fuse3 libfuse3-dev cmake build-essential \
             libattr1-dev zlib1g-dev libbz2-dev
+
+          # The first attempt's apt log showed fuse3 getting silently
+          # removed as a side effect of installing the wrong (FUSE2)
+          # package -- confirm fuse3 userspace tooling actually landed
+          # this time before spending build time on apfs-fuse itself.
+          which fusermount3 || { echo "::error::fusermount3 not found after installing fuse3 -- FUSE3 userspace may not be set up correctly"; exit 1; }
+
           git clone --depth 1 https://github.com/sgan81/apfs-fuse.git
           cd apfs-fuse
           git submodule update --init --recursive
