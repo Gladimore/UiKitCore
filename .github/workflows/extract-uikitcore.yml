@@ -1,13 +1,14 @@
 # .github/workflows/extract-uikitcore.yml
 #
 # Downloads an Apple-signed IPSW directly from Apple's CDN (via the URL you
-# supply) and extracts UIKitCore from the dyld shared cache using the
-# `blacktop/ipsw` CLI, then uploads just that one framework binary as a
-# build artifact. Runs entirely on GitHub's Linux runner -- nothing touches
-# your Windows machine except the final small download.
+# supply) and extracts one or more files from the dyld shared cache using
+# the `blacktop/ipsw` CLI, then uploads them as a single build artifact.
+# Runs entirely on GitHub's Linux runner -- nothing touches your Windows
+# machine except the final small download.
 #
-# Usage: trigger manually (workflow_dispatch) and paste in the direct IPSW
-# URL from ipsw.me's "Download" button for your exact build.
+# Usage: trigger manually (workflow_dispatch), paste in the direct IPSW
+# URL from ipsw.me's "Download" button for your exact build, and adjust
+# framework_paths if you want something other than the default pair.
 
 name: Extract UIKitCore from IPSW
 
@@ -18,11 +19,11 @@ on:
         description: 'Direct Apple CDN URL to the .ipsw file (from ipsw.me)'
         required: true
         type: string
-      framework_path:
-        description: 'Path inside the shared cache to extract'
+      framework_paths:
+        description: 'Comma-separated paths inside the shared cache to extract'
         required: false
         type: string
-        default: '/System/Library/PrivateFrameworks/UIKitCore.framework/UIKitCore'
+        default: '/System/Library/PrivateFrameworks/UIKitCore.framework/UIKitCore,/usr/lib/libobjc.dylib'
 
 jobs:
   extract:
@@ -146,7 +147,7 @@ jobs:
           echo "CACHE_DIR=$CACHE_DIR" >> "$GITHUB_ENV"
           ls -lh "$CACHE_DIR"/dyld_shared_cache_arm64e*
 
-      - name: Split out individual framework from shared cache
+      - name: Split out frameworks from shared cache
         run: |
           MAIN_CACHE="$CACHE_DIR/dyld_shared_cache_arm64e"
           if [ ! -f "$MAIN_CACHE" ]; then
@@ -155,12 +156,40 @@ jobs:
             exit 1
           fi
           echo "Using cache: $MAIN_CACHE"
-          ipsw dyld extract "$MAIN_CACHE" "${{ inputs.framework_path }}" --output extracted/
+
+          mkdir -p extracted
+
+          # Split the comma-separated input into individual paths and
+          # extract each one in turn, so a single IPSW download/mount can
+          # serve multiple requested files instead of re-running the whole
+          # pipeline per file.
+          IFS=',' read -ra FRAMEWORK_PATHS <<< "${{ inputs.framework_paths }}"
+
+          FAILED=0
+          for raw_path in "${FRAMEWORK_PATHS[@]}"; do
+            # Trim accidental whitespace around commas (e.g. "a, b").
+            p="$(echo "$raw_path" | xargs)"
+            if [ -z "$p" ]; then
+              continue
+            fi
+            echo "=== Extracting: $p ==="
+            if ! ipsw dyld extract "$MAIN_CACHE" "$p" --output extracted/; then
+              echo "::error::Failed to extract $p"
+              FAILED=1
+            fi
+          done
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "::error::One or more extractions failed -- see log above"
+            exit 1
+          fi
+
+          echo "=== Extracted files ==="
           ls -lh extracted/
 
-      - name: Upload UIKitCore artifact
+      - name: Upload extracted frameworks artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UIKitCore
+          name: extracted-frameworks
           path: extracted/*
           retention-days: 3
