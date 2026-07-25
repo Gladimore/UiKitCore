@@ -38,8 +38,37 @@ jobs:
       - name: Install download + ipsw tooling
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq aria2
-          curl -sL https://github.com/blacktop/ipsw/releases/latest/download/ipsw_linux_amd64.tar.gz -o ipsw.tar.gz
+          sudo apt-get install -y -qq aria2 jq
+
+          # blacktop/ipsw releases are versioned filenames, not a static
+          # "latest" URL -- e.g. ipsw_3.1.658_linux_x86_64.tar.gz. Query the
+          # GitHub API for the real current tag/version first (this call
+          # doesn't need auth for a public repo's releases), then build the
+          # matching asset URL from that, per their documented install
+          # pattern (https://blacktop.github.io/ipsw/docs/getting-started/installation/).
+          IPSW_VERSION=$(curl -s https://api.github.com/repos/blacktop/ipsw/releases/latest \
+            | jq -r '.tag_name' | tr -d 'v')
+          echo "Resolved ipsw CLI version: $IPSW_VERSION"
+          if [ -z "$IPSW_VERSION" ] || [ "$IPSW_VERSION" = "null" ]; then
+            echo "::error::Failed to resolve blacktop/ipsw latest release tag from GitHub API"
+            exit 1
+          fi
+
+          ASSET_URL="https://github.com/blacktop/ipsw/releases/download/v${IPSW_VERSION}/ipsw_${IPSW_VERSION}_linux_x86_64.tar.gz"
+          echo "Downloading: $ASSET_URL"
+          curl -sL -o ipsw.tar.gz "$ASSET_URL"
+
+          # Fail loudly here instead of letting a bad download reach tar as
+          # garbage input (which is what produced the "not in gzip format"
+          # error last time -- curl -sL silently saves a 404/error page as
+          # if it were the real file).
+          file ipsw.tar.gz
+          if ! file ipsw.tar.gz | grep -qi 'gzip compressed'; then
+            echo "::error::Downloaded file is not a gzip archive -- asset URL may be wrong. Check https://github.com/blacktop/ipsw/releases for the current filename pattern."
+            head -c 500 ipsw.tar.gz
+            exit 1
+          fi
+
           tar -xzf ipsw.tar.gz
           chmod +x ipsw
           sudo mv ipsw /usr/local/bin/ipsw
