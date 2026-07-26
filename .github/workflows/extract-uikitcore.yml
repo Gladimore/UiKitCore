@@ -225,6 +225,52 @@ jobs:
           echo "=== Extracted files ==="
           ls -lh extracted/
 
+      - name: Class-dump directly from the full shared cache
+        run: |
+          # Standalone extraction (previous approach) fails for ObjC
+          # metadata on modern caches: newer dyld caches use *relative*
+          # method-list pointers that are offsets from a selector-string
+          # base living in the shared cache itself, not in any single
+          # dylib. Once a dylib is split out alone, that base is gone,
+          # and every method-list/protocol read errors out (see
+          # extraction-diagnostics from prior runs -- "ObjC relative
+          # method selectors require the shared cache's selector base,
+          # which is unavailable in a standalone dylib").
+          #
+          # Fix: don't split the dylib out at all for ObjC analysis --
+          # run ipsw's class-dump directly against the full cache file,
+          # specifying which image inside it to dump. This keeps the
+          # selector base in scope the whole time.
+          mkdir -p classdumps
+
+          IFS=',' read -ra FRAMEWORK_PATHS <<< "${{ inputs.framework_paths }}"
+          FAILED=0
+          for raw_path in "${FRAMEWORK_PATHS[@]}"; do
+            p="$(echo "$raw_path" | xargs)"
+            [ -z "$p" ] && continue
+            base="$(basename "$p")"
+            echo "=== Class-dumping: $p ==="
+            if ! ipsw class-dump "$MAIN_CACHE" --dylib "$p" > "classdumps/${base}.classdump.txt" 2> "classdumps/${base}.classdump.err.log"; then
+              echo "::error::class-dump failed for $p -- see ${base}.classdump.err.log"
+              cat "classdumps/${base}.classdump.err.log"
+              FAILED=1
+            else
+              echo "Wrote classdumps/${base}.classdump.txt ($(wc -l < "classdumps/${base}.classdump.txt") lines)"
+            fi
+          done
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "::error::One or more class-dumps failed -- see logs above"
+            exit 1
+          fi
+
+      - name: Upload class-dump artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: uikit-classdumps
+          path: classdumps/*
+          retention-days: 3
+
       - name: Diagnose extracted Mach-O fixups and ObjC metadata
         run: |
           # Confirms whether the extraction actually resolved chained
