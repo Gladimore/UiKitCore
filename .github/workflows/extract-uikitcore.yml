@@ -147,6 +147,22 @@ jobs:
           echo "CACHE_DIR=$CACHE_DIR" >> "$GITHUB_ENV"
           ls -lh "$CACHE_DIR"/dyld_shared_cache_arm64e*
 
+      - name: Add swap space
+        run: |
+          # `ipsw dyld extract --objc --slide --stubs` resolves full ObjC
+          # metadata graphs and holds ~20M symbols in memory before writing
+          # the symbol cache -- that's what's spiking RAM right after
+          # "Saving symbol cache" and getting SIGTERM'd (exit 143) by the
+          # OOM killer on GitHub's default 7GB runners. Add swap so a
+          # memory spike degrades to slower instead of getting killed.
+          # 16G is generous headroom; the free disk step earlier clears
+          # room for this on the same volume.
+          sudo fallocate -l 16G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
       - name: Split out frameworks from shared cache
         run: |
           MAIN_CACHE="$CACHE_DIR/dyld_shared_cache_arm64e"
