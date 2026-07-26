@@ -173,7 +173,17 @@ jobs:
               continue
             fi
             echo "=== Extracting: $p ==="
-            if ! ipsw dyld extract "$MAIN_CACHE" "$p" --output extracted/; then
+            # --slide applies the shared cache's rebase/slide info so
+            # pointers (e.g. ObjC metadata arrays) resolve to real
+            # addresses instead of staying in raw cache-address space.
+            # --objc bakes resolved ObjC metadata into the extracted
+            # file's symtab, which is what Ghidra's ObjC analyzer and
+            # `ipsw macho info -o` both need to read it back correctly.
+            # --stubs adds stub islands so inter-image calls resolve too.
+            # None of these are on by default -- omitting them is what
+            # produced the "no fixups" / garbage-vmaddr ObjC parse
+            # failures seen in extraction-diagnostics.
+            if ! ipsw dyld extract "$MAIN_CACHE" "$p" --slide --objc --stubs --output extracted/; then
               echo "::error::Failed to extract $p"
               FAILED=1
             fi
