@@ -155,12 +155,24 @@ jobs:
           # "Saving symbol cache" and getting SIGTERM'd (exit 143) by the
           # OOM killer on GitHub's default 7GB runners. Add swap so a
           # memory spike degrades to slower instead of getting killed.
-          # 16G is generous headroom; the free disk step earlier clears
-          # room for this on the same volume.
-          sudo fallocate -l 16G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          #
+          # NOTE: /swapfile is not used here -- GitHub's runner image
+          # already has something at that exact path (fallocate returned
+          # "Text file busy", meaning it's already open/in-use), so we use
+          # a workspace-local path instead and check for existing swap
+          # first rather than assuming a clean slate.
+          echo "=== Existing swap before changes ==="
+          swapon --show || echo "(none active)"
+          free -h
+
+          SWAPFILE="$RUNNER_WORKSPACE/ipsw_swapfile"
+          sudo fallocate -l 16G "$SWAPFILE"
+          sudo chmod 600 "$SWAPFILE"
+          sudo mkswap "$SWAPFILE"
+          sudo swapon "$SWAPFILE"
+
+          echo "=== Swap after changes ==="
+          swapon --show
           free -h
 
       - name: Split out frameworks from shared cache
