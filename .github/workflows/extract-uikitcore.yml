@@ -250,7 +250,7 @@ jobs:
             [ -z "$p" ] && continue
             base="$(basename "$p")"
             echo "=== Class-dumping: $p ==="
-            if ! ipsw class-dump "$MAIN_CACHE" --dylib "$p" > "classdumps/${base}.classdump.txt" 2> "classdumps/${base}.classdump.err.log"; then
+            if ! ipsw class-dump "$MAIN_CACHE" "$p" > "classdumps/${base}.classdump.txt" 2> "classdumps/${base}.classdump.err.log"; then
               echo "::error::class-dump failed for $p -- see ${base}.classdump.err.log"
               cat "classdumps/${base}.classdump.err.log"
               FAILED=1
